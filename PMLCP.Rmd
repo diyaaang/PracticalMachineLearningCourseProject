@@ -1,0 +1,156 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Di Yang"
+date: "December 18, 2015"
+output: html_document
+---
+# Introduction
+### Background
+It is possible to collect large amounts of data about personal exercise activity quickly and inexpensively. This data is reguarly quantified for how much an activity is done, but rarely quantified for how well the activity is done. This report uses data from accelerometers on the belt, forearm, arm, and dumb bell of six participants, who were asked to perform barbell lifts correctly and incorrectly in five different ways. 
+
+### Data
+The training and test data sets for this project were provided from http://groupware.les.inf.puc-rio.br/har as follows:
+
+Training: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+Testing: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+### Goal
+The goal of this report is to predict the manner in which the participants completed the exercise. This is the "classe" variable in the training set. Other variables can be used for prediction as well. This report will describe how the model was built, how cross validation was used, what the expected out of sample error is, and the reasoning for the choices made. This prediction model will also be used to predict 20 test cases.
+
+# Setup
+## Getting the data
+Set up the libraries
+```{r include=TRUE, message=FALSE}
+library(caret)
+library(rattle)
+library(RCurl)
+library(rpart)
+library(randomForest)
+```
+
+Load the data
+```{r}
+set.seed(12345)
+urlTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urlTest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+train <- read.csv(url(urlTrain), na.strings=c("NA","#DIV/0!",""))
+test <- read.csv(url(urlTest), na.strings=c("NA","#DIV/0!",""))
+```
+
+Partition the train data set into two
+```{r}
+inTrain <- createDataPartition(train$classe, p=0.6, list=FALSE)
+myTrain <- train[inTrain, ]
+myTest <- train[-inTrain, ]
+dim(myTrain); dim(myTest)
+```
+
+## Cleaning the data
+### Transformations for training data set
+
+Remove the NearZeroVariance variables
+```{r}
+nzv <- nearZeroVar(myTrain, saveMetrics=TRUE)
+myTrain <- myTrain[,nzv$nzv==FALSE]
+nzv<- nearZeroVar(myTest,saveMetrics=TRUE)
+myTest <- myTest[,nzv$nzv==FALSE]
+```
+
+Remove the first column in myTrain data set to avoid interference with machine learning algorithms
+```{r}
+myTrain <- myTrain[c(-1)]
+```
+
+Clean variables with more than 60 percent N/A
+```{r}
+train3 <- myTrain
+for(i in 1:length(myTrain)) {
+    if( sum( is.na( myTrain[, i] ) ) /nrow(myTrain) >= .7) {
+        for(j in 1:length(train3)) {
+            if( length( grep(names(myTrain[i]), names(train3)[j]) ) == 1)  {
+                train3 <- train3[ , -j]
+            }   
+        } 
+    }
+}
+```
+
+Set back to the original variable name
+```{r}
+myTrain <- train3
+rm(train3)
+```
+
+### Transformations for test data set
+```{r}
+clean1 <- colnames(myTrain)
+clean2 <- colnames(myTrain[, -58])    # remove the classe column
+myTest <- myTest[clean1]         		# allow only variables in myTest that are also in myTrain
+test <- test[clean2]             	# allow only variables in test that are also in myTrain
+
+dim(myTest) 	# check the number of observations
+dim(test)		# check the number of observations
+```
+
+Coerce the data into the same type to ensure proper functioning of decision trees and RandomForest algorithm with the test data set 
+```{r}
+for (i in 1:length(test) ) {
+    for(j in 1:length(myTrain)) {
+        if( length( grep(names(myTrain[i]), names(test)[j]) ) == 1)  {
+            class(test[j]) <- class(myTrain[i])
+        }      
+    }      
+}
+```
+To get the same class between test and myTrain
+```{r}
+test <- rbind(myTrain[2, -58] , test)
+test <- test[-1,]
+```
+
+# Prediction with Decision Trees
+```{r}
+set.seed(12345)
+modFitA1 <- rpart(classe ~ ., data=myTrain, method="class")
+fancyRpartPlot(modFitA1)
+
+predictionsA1 <- predict(modFitA1, myTest, type = "class")
+cmtree <- confusionMatrix(predictionsA1, myTest$classe)
+cmtree
+
+plot(cmtree$table, col = cmtree$byClass, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(cmtree$overall['Accuracy'], 4)))
+```
+
+# Prediction with Random Forests
+```{r}
+set.seed(12345)
+modFitB1 <- randomForest(classe ~ ., data=myTrain)
+predictionB1 <- predict(modFitB1, myTest, type = "class")
+cmrf <- confusionMatrix(predictionB1, myTest$classe)
+cmrf
+
+plot(modFitB1)
+
+plot(cmrf$table, col = cmtree$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cmrf$overall['Accuracy'], 4)))
+```
+
+# Predicting Results on the Test Data
+Random Forests gave an Accuracy in the myTest dataset of 99.89%, which was more accurate than the Accuracy on the Decision Trees. The expected out-of-sample error is 100-99.89 = 0.11%.
+
+```{r}
+predictionB2 <- predict(modFitB1, test, type = "class")
+predictionB2
+
+# write the results to a .txt file to submit
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+# pml_write_files(predictionB2)
+```
